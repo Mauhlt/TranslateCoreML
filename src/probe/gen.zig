@@ -44,6 +44,5 @@ pub fn main(init: std.process.Init) !void {
         const rname = try std.fmt.allocPrint(gpa, "{s}.ref", .{name});
         defer gpa.free(rname);
         try out.writeFile(io, .{ .sub_path = rname, .data = bytes });
-        std.debug.print("coreml-probe-gen: {s}/{s} ({d} ops, target {s})\n", .{ out_path, pkg, x.b.ops.items.len, @tagName(target) });
     }
 }

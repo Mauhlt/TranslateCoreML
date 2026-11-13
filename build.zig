@@ -92,17 +92,17 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = lib_tool.root_module })).step);
 
     // macOS probe (on a Mac).
-    const mac_step = b.step("coreml-probe", "On a Mac: build zig-out/bin/coreml-probe and zig-out/probe");
-    if (b.graph.host.result.os.tag == .macos) {
-        const pm = probeModule(b, "src/probe/macos_main.zig", b.graph.host, optimize);
-        pm.linkFramework("CoreML", .{});
-        pm.linkFramework("Foundation", .{});
-        pm.linkSystemLibrary("objc", .{});
+    // Core ML, Foundation and libobjc are dlopen'd (src/objc.zig), so this
+    // also cross-links from another OS: -Dtarget=aarch64-macos.
+    const mac_step = b.step("coreml-probe", "Build zig-out/bin/coreml-probe (macOS: on a Mac, or -Dtarget=aarch64-macos) and zig-out/probe");
+    const mac_target: ?std.Build.ResolvedTarget = if (target.result.os.tag == .macos) target else if (b.graph.host.result.os.tag == .macos) b.graph.host else null;
+    if (mac_target) |mt| {
+        const pm = probeModule(b, "src/probe/macos_main.zig", mt, optimize);
         const exe = b.addExecutable(.{ .name = "coreml-probe", .root_module = pm });
         mac_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
         mac_step.dependOn(&install_probe.step);
     } else {
-        mac_step.dependOn(&b.addFail("zig build coreml-probe runs on a Mac (Core ML); use apple-check here").step);
+        mac_step.dependOn(&b.addFail("zig build coreml-probe builds a macOS program: run it on a Mac or pass -Dtarget=aarch64-macos").step);
     }
 
     // iPhone app.

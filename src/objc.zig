@@ -12,6 +12,7 @@
 const std = @import("std");
 const Mac = @import("MacOS");
 pub const OBJC = Mac.OBJC;
+const DL = Mac.DL;
 
 pub const Object = OBJC.Object;
 pub const Class = OBJC.Class;
@@ -20,14 +21,110 @@ pub const BOOL = OBJC.BOOL;
 pub const NSUInteger = usize;
 pub const NSInteger = isize;
 
-extern fn objc_getClass(name: [*:0]const u8) ?*Class;
-extern fn objc_msgSend() void;
-extern fn objc_autoreleasePoolPush() ?*anyopaque;
-extern fn objc_autoreleasePoolPop(token: ?*anyopaque) void;
-extern fn sel_registerName(name: [*:0]const u8) ?*Selector;
-extern fn object_getClass(obj: ?*anyopaque) ?*Class;
-extern fn class_getName(cls: ?*Class) [*:0]const u8;
-extern fn class_respondsToSelector(cls: ?*Class, sel: *Selector) BOOL;
+// ---------------------------------------------------------------- loading
+//
+// libobjc, Foundation and CoreML are opened with dlopen (../MacOS's DL)
+// the first time anything here is used, so programs need no link-time
+// frameworks: a Mac binary cross-compiled without the SDK still links, and
+// the same code works in an app that does link them. Only libSystem
+// (dispatch, blocks, dlopen) is linked, as for every Darwin program.
+
+/// libobjc and Foundation symbols. Field names are the C symbol names.
+pub const Symbols = struct {
+    objc_getClass: ?*const fn ([*:0]const u8) callconv(.c) ?*Class,
+    objc_msgSend: ?*const fn () callconv(.c) void,
+    objc_autoreleasePoolPush: ?*const fn () callconv(.c) ?*anyopaque,
+    objc_autoreleasePoolPop: ?*const fn (?*anyopaque) callconv(.c) void,
+    sel_registerName: ?*const fn ([*:0]const u8) callconv(.c) ?*Selector,
+    object_getClass: ?*const fn (?*anyopaque) callconv(.c) ?*Class,
+    class_getName: ?*const fn (?*Class) callconv(.c) [*:0]const u8,
+    class_respondsToSelector: ?*const fn (?*Class, *Selector) callconv(.c) BOOL,
+    objc_allocateClassPair: ?*const fn (?*Class, [*:0]const u8, usize) callconv(.c) ?*Class,
+    objc_registerClassPair: ?*const fn (*Class) callconv(.c) void,
+    class_addMethod: ?*const fn (*Class, *Selector, OBJC.Imp, [*:0]const u8) callconv(.c) BOOL,
+};
+pub const FoundationSymbols = struct {
+    NSLog: ?*const fn (?*Object, ...) callconv(.c) void,
+    NSTemporaryDirectory: ?*const fn () callconv(.c) ?*Object,
+    NSSearchPathForDirectoriesInDomains: ?*const fn (NSUInteger, NSUInteger, BOOL) callconv(.c) ?*Object,
+};
+const All = struct {
+    objc: Symbols,
+    foundation: FoundationSymbols,
+};
+
+var loaded: All = undefined;
+var load_state: std.atomic.Value(u8) = .init(0); // 0 not yet, 1 ok, 2 failed
+var load_lock: std.atomic.Mutex = .unlocked;
+
+pub const LoadError = error{ LibraryNotFound, MissingSymbol };
+
+/// Opens libobjc, Foundation and CoreML (idempotent, thread-safe). Called
+/// implicitly by everything below; call it first to get an error instead
+/// of a panic on a system without them.
+pub fn load() LoadError!void {
+    switch (load_state.load(.acquire)) {
+        1 => return,
+        2 => return error.LibraryNotFound,
+        else => {},
+    }
+    while (!load_lock.tryLock()) std.atomic.spinLoopHint();
+    defer load_lock.unlock();
+    if (load_state.load(.acquire) == 1) return;
+    errdefer load_state.store(2, .release);
+    const lib = try DL.Library.open(&.{"/usr/lib/libobjc.A.dylib"});
+    const syms = lib.loadAll(Symbols);
+    if (DL.firstMissing(syms, &.{})) |name| {
+        std.log.scoped(.objc).err("libobjc is missing {s}", .{name});
+        return error.MissingSymbol;
+    }
+    const fnd = try DL.Library.open(&.{"/System/Library/Frameworks/Foundation.framework/Foundation"});
+    // Registers the Core ML classes (MLModel, ...). Never closed.
+    _ = try DL.Library.open(&.{"/System/Library/Frameworks/CoreML.framework/CoreML"});
+    loaded = .{ .objc = syms, .foundation = fnd.loadAll(FoundationSymbols) };
+    load_state.store(1, .release);
+}
+
+inline fn sym(comptime name: []const u8) @typeInfo(@FieldType(Symbols, name)).optional.child {
+    if (load_state.load(.acquire) != 1) load() catch @panic("Objective-C runtime / Core ML not available");
+    return @field(loaded.objc, name).?;
+}
+
+inline fn fsym(comptime name: []const u8) @FieldType(FoundationSymbols, name) {
+    if (load_state.load(.acquire) != 1) load() catch @panic("Objective-C runtime / Core ML not available");
+    return @field(loaded.foundation, name);
+}
+
+fn objc_getClass(name: [*:0]const u8) ?*Class {
+    return sym("objc_getClass")(name);
+}
+fn objc_autoreleasePoolPush() ?*anyopaque {
+    return sym("objc_autoreleasePoolPush")();
+}
+fn objc_autoreleasePoolPop(token: ?*anyopaque) void {
+    sym("objc_autoreleasePoolPop")(token);
+}
+fn sel_registerName(name: [*:0]const u8) ?*Selector {
+    return sym("sel_registerName")(name);
+}
+fn object_getClass(obj: ?*anyopaque) ?*Class {
+    return sym("object_getClass")(obj);
+}
+fn class_getName(cls: ?*Class) [*:0]const u8 {
+    return sym("class_getName")(cls);
+}
+fn class_respondsToSelector(cls: ?*Class, s: *Selector) BOOL {
+    return sym("class_respondsToSelector")(cls, s);
+}
+fn objc_allocateClassPair(superclass: ?*Class, name: [*:0]const u8, extra: usize) ?*Class {
+    return sym("objc_allocateClassPair")(superclass, name, extra);
+}
+fn objc_registerClassPair(cls: *Class) void {
+    sym("objc_registerClassPair")(cls);
+}
+fn class_addMethod(cls: *Class, name: *Selector, imp: OBJC.Imp, types: [*:0]const u8) BOOL {
+    return sym("class_addMethod")(cls, name, imp, types);
+}
 
 /// Registered selector for `name`, cached after the first call.
 pub fn sel(comptime name: [:0]const u8) *Selector {
@@ -67,7 +164,7 @@ pub fn respondsTo(obj: anytype, s: *Selector) bool {
 /// be concrete.
 pub fn msgSend(comptime Ret: type, target: anytype, selector: *Selector, args: anytype) Ret {
     const F = OBJC.MsgSendFn(Ret, @TypeOf(args));
-    const f: *const F = @ptrCast(&objc_msgSend);
+    const f: *const F = @ptrCast(sym("objc_msgSend"));
     return @call(.auto, f, .{ @as(?*Object, @ptrCast(target)), selector } ++ args);
 }
 
@@ -229,9 +326,6 @@ pub fn onBackgroundAsync(ctx: ?*anyopaque, work: DispatchFn) void {
 
 // ------------------------------------------------------------ classes
 
-extern fn objc_allocateClassPair(superclass: ?*Class, name: [*:0]const u8, extra: usize) ?*Class;
-extern fn objc_registerClassPair(cls: *Class) void;
-extern fn class_addMethod(cls: *Class, name: *Selector, imp: OBJC.Imp, types: [*:0]const u8) BOOL;
 
 /// Builds a subclass at runtime (an app delegate).
 pub const ClassBuilder = struct {
@@ -251,10 +345,6 @@ pub const ClassBuilder = struct {
     }
 };
 
-// Foundation C functions.
-extern fn NSLog(format: ?*Object, ...) void;
-extern fn NSTemporaryDirectory() ?*Object;
-extern fn NSSearchPathForDirectoriesInDomains(directory: NSUInteger, domains: NSUInteger, expand: BOOL) ?*Object;
 
 /// NSLog("%s", text): visible in Console.app and `devicectl ... --console`.
 pub fn log(text: []const u8) void {
@@ -264,17 +354,17 @@ pub fn log(text: []const u8) void {
     buf[n] = 0;
     const fmt = newString("%s") orelse return;
     defer release(fmt);
-    NSLog(fmt, @as([*:0]const u8, buf[0..n :0]));
+    (fsym("NSLog") orelse return)(fmt, @as([*:0]const u8, buf[0..n :0]));
 }
 
 /// The app's temporary folder (no trailing slash guaranteed).
 pub fn tempDir() []const u8 {
-    return std.mem.trimEnd(u8, stringBytes(NSTemporaryDirectory()), "/");
+    return std.mem.trimEnd(u8, stringBytes((fsym("NSTemporaryDirectory") orelse return "/tmp")()), "/");
 }
 
 /// The app's Documents folder (NSDocumentDirectory, user domain).
 pub fn documentsDir() []const u8 {
-    const list = NSSearchPathForDirectoriesInDomains(9, 1, 1);
+    const list = (fsym("NSSearchPathForDirectoriesInDomains") orelse return "")(9, 1, 1);
     if (arrayCount(list) == 0) return "";
     return stringBytes(arrayAt(list, 0));
 }

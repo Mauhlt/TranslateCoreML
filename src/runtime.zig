@@ -336,18 +336,7 @@ pub const MultiArray = struct {
 
     /// Copies the values out as row-major f32.
     pub fn readF32(a: *const MultiArray, dst: []f32) void {
-        const b = a.bytes();
-        const n = @min(dst.len, a.count());
-        const dense = a.contiguous();
-        for (dst[0..n], 0..) |*v, i| {
-            const o = if (dense) i else a.offsetOf(i);
-            v.* = switch (a.dtype) {
-                .float32 => std.mem.bytesAsSlice(f32, b)[o],
-                .float16 => @floatCast(std.mem.bytesAsSlice(f16, b)[o]),
-                .double => @floatCast(std.mem.bytesAsSlice(f64, b)[o]),
-                .int32 => @floatFromInt(std.mem.bytesAsSlice(i32, b)[o]),
-            };
-        }
+        a.readOut(.{ .f32 = dst });
     }
 
     /// Copies raw fp16 values (row-major) in; the array must be float16.
@@ -364,11 +353,58 @@ pub const MultiArray = struct {
     /// Copies the values out as raw fp16 (row-major); the array must be float16.
     pub fn readF16(a: *const MultiArray, dst: []f16) void {
         std.debug.assert(a.dtype == .float16);
-        const s = std.mem.bytesAsSlice(f16, a.bytes());
-        if (a.contiguous()) {
-            @memcpy(dst, s[0..dst.len]);
-        } else for (dst, 0..) |*v, i| {
-            v.* = s[a.offsetOf(i)];
+        a.readOut(.{ .f16 = dst });
+    }
+
+    const Dst = union(enum) { f32: []f32, f16: []f16 };
+
+    /// Reads through -[MLMultiArray getBytesWithHandler:] when the OS has it
+    /// (iOS 15.4 / macOS 12.3: the supported way for arrays Core ML backs
+    /// with its own buffers), else through dataPointer.
+    fn readOut(a: *const MultiArray, dst: Dst) void {
+        if (objc.respondsTo(a.obj, sel("getBytesWithHandler:"))) {
+            ReadJob.job = .{ .a = a, .dst = dst };
+            ReadJob.block = objc.Block.global(@ptrCast(&ReadJob.handler));
+            msgSend(void, a.obj, sel("getBytesWithHandler:"), .{@as(*const objc.Block, &ReadJob.block)});
+            ReadJob.job = null;
+        } else a.copyOut(a.bytes(), dst);
+    }
+
+    const ReadJob = struct {
+        threadlocal var job: ?struct { a: *const MultiArray, dst: Dst } = null;
+        threadlocal var block: objc.Block = undefined;
+        /// The handler runs synchronously, on this thread, before
+        /// getBytesWithHandler: returns.
+        fn handler(_: *const objc.Block, ptr: ?*const anyopaque, size: isize) callconv(.c) void {
+            const j = job orelse return;
+            const p: [*]const u8 = @ptrCast(ptr orelse return);
+            j.a.copyOut(p[0..@intCast(size)], j.dst);
+        }
+    };
+
+    fn copyOut(a: *const MultiArray, b: []const u8, dst: Dst) void {
+        const dense = a.contiguous();
+        switch (dst) {
+            .f32 => |d| {
+                const n = @min(d.len, a.count());
+                for (d[0..n], 0..) |*v, i| {
+                    const o = if (dense) i else a.offsetOf(i);
+                    v.* = switch (a.dtype) {
+                        .float32 => std.mem.bytesAsSlice(f32, b)[o],
+                        .float16 => @floatCast(std.mem.bytesAsSlice(f16, b)[o]),
+                        .double => @floatCast(std.mem.bytesAsSlice(f64, b)[o]),
+                        .int32 => @floatFromInt(std.mem.bytesAsSlice(i32, b)[o]),
+                    };
+                }
+            },
+            .f16 => |d| {
+                const s = std.mem.bytesAsSlice(f16, b);
+                if (dense) {
+                    @memcpy(d, s[0..d.len]);
+                } else for (d, 0..) |*v, i| {
+                    v.* = s[a.offsetOf(i)];
+                }
+            },
         }
     }
 };

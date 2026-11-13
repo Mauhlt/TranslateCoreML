@@ -1,0 +1,16 @@
+.{
+    .name = .translate_coreml,
+    .version = "0.1.0",
+    .fingerprint = 0xf5683e871b0d69f7,
+    .minimum_zig_version = "0.18.0-dev.4+5a23bf4b2",
+    .dependencies = .{
+        // Objective-C runtime types and msgSend signatures (Apple targets only).
+        .MacOS = .{ .path = "../MacOS" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}

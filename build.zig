@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) void {
         .target = b.graph.host,
         .optimize = .ReleaseSafe,
     }) });
+    b.installArtifact(lib_tool); // also used by dependents (stt ios-check) via artifact("ios-zig-lib")
     const lib_run = b.addRunArtifact(lib_tool);
     lib_run.addDirectoryArg(.zig_lib);
     const zig_lib = lib_run.addOutputDirectoryArg("zig-lib");
@@ -88,6 +89,7 @@ pub fn build(b: *std.Build) void {
         .target = b.graph.host,
         .optimize = .ReleaseSafe,
     }) });
+    b.installArtifact(sign_tool); // also used by dependents via artifact("ios-sign")
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = sign_tool.root_module })).step);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = lib_tool.root_module })).step);
 

@@ -20,8 +20,9 @@ Objective-C runtime.
 | `src/probe/` | the probe models and the probe programs (Mac CLI, iPhone app) |
 | `src/tools/` | `mlmodel-dump`, `ios-zig-lib` (from Portal), `ios-sign` (from Portal) |
 
-Depends on `../MacOS` (Objective-C types and the `objc_msgSend` signature
-builder), only for Apple targets.
+Depends on [MacOS](https://github.com/Mauhlt/MacOS) (Objective-C types and
+the `objc_msgSend` signature builder), a lazy dependency fetched only when a
+build targets iOS or macOS.
 
 ## Format provenance
 

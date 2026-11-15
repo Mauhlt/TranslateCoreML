@@ -2,10 +2,15 @@
     .name = .translate_coreml,
     .version = "0.1.0",
     .fingerprint = 0xf5683e871b0d69f7,
-    .minimum_zig_version = "0.18.0-dev.4+5a23bf4b2",
+    .minimum_zig_version = "0.18.0-dev.1005+75d48dfff",
     .dependencies = .{
         // Objective-C runtime types and msgSend signatures (Apple targets only).
-        .MacOS = .{ .path = "../MacOS" },
+        // Lazy: fetched only when a build targets iOS or macOS.
+        .MacOS = .{
+            .url = "git+https://github.com/Mauhlt/MacOS#4960014dbbda33f54b40f6d32e35b9ec61498574",
+            .hash = "MacOS-0.0.0-AvEoY9GwAACyf7BIF8-DI1vAzl_hero7eEXqH9v9Onpy",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",

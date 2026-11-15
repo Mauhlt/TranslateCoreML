@@ -111,8 +111,9 @@ pub fn build(b: *std.Build) void {
     addIosApp(b, optimize, zig_lib, probe_dir, sign_tool, ios_t);
 }
 
-/// Module "coreml" for `t`. On Apple targets it imports ../MacOS (the
-/// Objective-C types) and needs libc.
+/// Module "coreml" for `t`. On Apple targets it imports MacOS (the
+/// Objective-C types; a lazy dependency, so other targets never fetch it)
+/// and needs libc.
 fn coremlModule(b: *std.Build, t: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, exported: bool) *std.Build.Module {
     const opts: std.Build.Module.CreateOptions = .{
         .root_source_file = b.path("src/root.zig"),
@@ -123,7 +124,9 @@ fn coremlModule(b: *std.Build, t: std.Build.ResolvedTarget, optimize: std.builti
     const os = t.result.os.tag;
     if (os == .ios or os == .macos) {
         m.link_libc = true;
-        m.addImport("MacOS", b.dependency("MacOS", .{ .target = t, .optimize = optimize }).module("MacOS"));
+        // Lazy: null on the first pass of a fresh checkout; the build runner
+        // fetches MacOS and runs build() again.
+        if (b.lazyDependency("MacOS", .{ .target = t, .optimize = optimize })) |dep| m.addImport("MacOS", dep.module("MacOS"));
     }
     return m;
 }

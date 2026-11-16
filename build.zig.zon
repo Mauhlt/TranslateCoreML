@@ -7,8 +7,8 @@
         // Objective-C runtime types and msgSend signatures (Apple targets only).
         // Lazy: fetched only when a build targets iOS or macOS.
         .MacOS = .{
-            .url = "git+https://github.com/Mauhlt/MacOS#4960014dbbda33f54b40f6d32e35b9ec61498574",
-            .hash = "MacOS-0.0.0-AvEoY9GwAACyf7BIF8-DI1vAzl_hero7eEXqH9v9Onpy",
+            .url = "git+https://github.com/Mauhlt/MacOS#e1d93c290429457e532db7fa2ecec7c0411421f0",
+            .hash = "MacOS-0.0.1-AvEoY7S3AABQHe6a7pKtzamlfs1nLEECaoX2f8VGa0Cs",
             .lazy = true,
         },
     },
